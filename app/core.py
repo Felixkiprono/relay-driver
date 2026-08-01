@@ -21,8 +21,19 @@ class Settings(BaseSettings):
     driver: str = "daloradius"
 
     dalo_url: str = ""
-    dalo_username: str = ""
-    dalo_password: str = ""
+
+    dalo_db_host: str = ""
+    dalo_db_port: int = 3308
+    dalo_db_name: str = "radius"
+    dalo_db_user: str = ""
+    dalo_db_password: str = ""
+
+    @property
+    def dalo_db_url(self) -> str:
+        return (
+            f"mysql+pymysql://{self.dalo_db_user}:{self.dalo_db_password}"
+            f"@{self.dalo_db_host}:{self.dalo_db_port}/{self.dalo_db_name}"
+        )
 
 
 settings = Settings()

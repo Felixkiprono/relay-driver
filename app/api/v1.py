@@ -42,7 +42,7 @@ class UsernameRequest(BaseModel):
     username: str
 
 
-@router.get("/health", dependencies=[Depends(verify_api_key)])
+@router.get("/health")
 def health(db: Session = Depends(get_db)) -> dict[str, Any]:
     try:
         db.execute(text("SELECT 1"))
@@ -52,14 +52,15 @@ def health(db: Session = Depends(get_db)) -> dict[str, Any]:
 
     try:
         get_driver_manager().driver.health()
-        driver_status = "healthy"
+        radius_db_status = "healthy"
     except Exception:
-        driver_status = "unreachable"
+        radius_db_status = "unreachable"
 
     return {
-        "status": "healthy" if database_status == "healthy" and driver_status == "healthy" else "degraded",
+        "status": "healthy" if database_status == "healthy" and radius_db_status == "healthy" else "degraded",
         "driver": settings.driver,
         "database": database_status,
+        "radius_db": radius_db_status,
         "uptime": int(time.monotonic() - START_TIME),
     }
 

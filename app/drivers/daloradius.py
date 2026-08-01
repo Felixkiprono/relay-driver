@@ -1,6 +1,7 @@
 from typing import Any
 
-import httpx
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
 
 from app.core import settings
 from app.drivers.base import BaseDriver
@@ -8,14 +9,12 @@ from app.drivers.base import BaseDriver
 
 class DaloRadiusDriver(BaseDriver):
     def __init__(self) -> None:
-        self._client = httpx.Client(
-            base_url=settings.dalo_url,
-            auth=(settings.dalo_username, settings.dalo_password),
-            timeout=10.0,
-        )
+        self._engine: Engine = create_engine(settings.dalo_db_url, pool_pre_ping=True)
 
     def health(self) -> dict[str, Any]:
-        raise NotImplementedError
+        with self._engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return {"radius_db": "healthy"}
 
     def create_customer(self, username: str, password: str, **kwargs: Any) -> dict[str, Any]:
         raise NotImplementedError
