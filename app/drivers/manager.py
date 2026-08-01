@@ -1,11 +1,9 @@
-from app.core.config import settings
+from app.core import settings
 from app.drivers.base import BaseDriver
 from app.drivers.daloradius import DaloRadiusDriver
-from app.drivers.mikrotik import MikroTikDriver
 
 _REGISTRY: dict[str, type[BaseDriver]] = {
     "daloradius": DaloRadiusDriver,
-    "mikrotik": MikroTikDriver,
 }
 
 
@@ -18,7 +16,6 @@ class DriverManager:
             raise ValueError(f"Unknown driver: {name}") from None
         self.name = name
         self.driver: BaseDriver = driver_cls()
-        self.driver.connect()
 
     def dispatch(self, action: str, **kwargs: object) -> object:
         method = getattr(self.driver, action, None)

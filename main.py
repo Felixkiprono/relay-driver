@@ -1,6 +1,6 @@
 import uvicorn
 
-from app.core.config import settings
+from app.core import settings
 
 
 def main() -> None:

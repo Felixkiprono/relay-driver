@@ -1,4 +1,10 @@
+import logging
+import time
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+__version__ = "0.1.0"
+START_TIME = time.monotonic()
 
 
 class Settings(BaseSettings):
@@ -8,6 +14,8 @@ class Settings(BaseSettings):
     port: int = 8080
     log_level: str = "INFO"
 
+    api_key: str = ""
+
     database_url: str = "sqlite:///data/relay.db"
 
     driver: str = "daloradius"
@@ -16,9 +24,13 @@ class Settings(BaseSettings):
     dalo_username: str = ""
     dalo_password: str = ""
 
-    mikrotik_host: str = ""
-    mikrotik_username: str = ""
-    mikrotik_password: str = ""
-
 
 settings = Settings()
+
+
+def get_logger(name: str) -> logging.Logger:
+    logging.basicConfig(
+        level=settings.log_level,
+        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    )
+    return logging.getLogger(name)

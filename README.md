@@ -1,11 +1,10 @@
 # Relay
 
-A lightweight, vendor-neutral network access service.
+A small standalone service that talks to network infrastructure.
 
-Relay translates a stable REST API into vendor-specific network operations —
-daloRADIUS, MikroTik, UniFi, OpenWISP, and future backends — so business
-systems (like Laravel) can create users, activate packages, and disconnect
-sessions without knowing which vendor sits underneath.
+Relay has one responsibility: receive requests from Laravel, execute them
+against the configured network driver, and return the result. It holds no
+business logic — customers, billing, packages and auth stay in Laravel.
 
 ```
 Laravel
@@ -13,9 +12,7 @@ Laravel
     ▼
  Relay
     │
-    ├── daloRADIUS
-    ├── MikroTik
-    └── Future Drivers
+    └── daloRADIUS
 ```
 
 ## Run
@@ -28,32 +25,44 @@ uv run python main.py
 Or with Docker:
 
 ```bash
-docker compose up
+docker compose up -d
+```
+
+## Auth
+
+Every request must include the API key from `.env`:
+
+```
+X-API-KEY: your-secret-key
 ```
 
 ## API
 
 ```
-GET  /health
-GET  /version
-GET  /drivers
-GET  /online
-GET  /statistics
+GET  /api/v1/health
+GET  /api/v1/version
+GET  /api/v1/driver
 
-POST /user/create
-POST /user/delete
-POST /package/activate
-POST /user/disconnect
-POST /voucher/create
+POST   /api/v1/customer
+PUT    /api/v1/customer/{username}
+DELETE /api/v1/customer/{username}
+
+POST /api/v1/package/activate
+POST /api/v1/package/deactivate
+
+POST /api/v1/session/disconnect
+GET  /api/v1/sessions
+
+GET  /api/v1/statistics
 ```
 
 ## Drivers
 
 Every driver implements `BaseDriver` ([app/drivers/base.py](app/drivers/base.py)).
-Switching backends is a config change:
+Only daloRADIUS is implemented today. The active driver is selected from `.env`:
 
 ```
-DRIVER=mikrotik
+DRIVER=daloradius
 ```
 
-No other code changes.
+Adding a new driver means adding a file under `app/drivers/` — no API changes.
