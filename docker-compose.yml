@@ -3,9 +3,11 @@ services:
     build:
       context: .
     ports:
-      - "8082:8080"
+      - "127.0.0.1:8082:8080"
     env_file:
       - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - relay_data:/app/data
 

@@ -66,3 +66,30 @@ DRIVER=daloradius
 ```
 
 Adding a new driver means adding a file under `app/drivers/` — no API changes.
+
+## Deploying via NanoDeploi
+
+This repo deploys as a **repo-compose** site (`docker-compose.yml` lives at the
+repo root and NanoDeploi reads it directly — no generated stack).
+
+When creating the site:
+
+- `use_repo_compose` — enabled
+- `repo_compose_web_service` — `relay`
+- `runtime_port` — `8080` (the port the app listens on inside the container;
+  Traefik routes to this over the internal `nanodeploi_web` network)
+
+NanoDeploi clones the repo into `src/`, rewrites `build.context: .` → `./src`
+and `env_file: .env` → `./src/.env`, and injects Traefik labels/network —
+no changes needed in `docker-compose.yml` for that. If no env is configured
+for the site yet, NanoDeploi seeds `src/.env` from `.env.example` on first
+deploy.
+
+The `127.0.0.1:8082:8080` port binding in `docker-compose.yml` is for local
+`docker compose up` only — production traffic reaches the container through
+Traefik, not that host port.
+
+`DALO_DB_HOST=host.docker.internal` (plus the `extra_hosts: host-gateway`
+entry in `docker-compose.yml`) lets Relay reach a daloRADIUS MariaDB bound to
+the host's loopback interface, on both local Docker Desktop and a Linux
+droplet.
