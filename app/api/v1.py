@@ -6,10 +6,12 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.core import START_TIME, __version__, settings
+from app.core import START_TIME, __version__, get_logger, settings
 from app.database import get_db
 from app.drivers.manager import get_driver_manager
 from app.models import AuditLog
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1")
 
@@ -44,11 +46,14 @@ class UsernameRequest(BaseModel):
 
 @router.get("/health")
 def health(db: Session = Depends(get_db)) -> dict[str, Any]:
+    logger.info("Connecting to local db at %s", settings.database_url)
     try:
         db.execute(text("SELECT 1"))
         database_status = "healthy"
-    except Exception:
+        logger.info("Local db connection succeeded (%s)", settings.database_url)
+    except Exception as exc:
         database_status = "unreachable"
+        logger.warning("Local db connection failed (%s): %s", settings.database_url, exc)
 
     try:
         get_driver_manager().driver.health()
