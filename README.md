@@ -30,7 +30,7 @@ docker compose up -d
 
 ## Auth
 
-Every request must include the API key from `.env`:
+Every request except `/api/v1/health` must include the API key from `.env`:
 
 ```
 X-API-KEY: your-secret-key
@@ -38,14 +38,19 @@ X-API-KEY: your-secret-key
 
 ## API
 
+Interactive docs (Swagger UI) at `/docs`, raw OpenAPI spec at `/openapi.json`.
+Click **Authorize** in `/docs` to set the API key once for every request on
+the page.
+
 ```
-GET  /api/v1/health
+GET  /api/v1/health                       (no auth)
 GET  /api/v1/version
 GET  /api/v1/driver
 
 POST   /api/v1/customer
 PUT    /api/v1/customer/{username}
 DELETE /api/v1/customer/{username}
+POST   /api/v1/customer/{username}/resume
 
 POST /api/v1/package/activate
 POST /api/v1/package/deactivate

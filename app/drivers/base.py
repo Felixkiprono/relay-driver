@@ -22,6 +22,9 @@ class BaseDriver(ABC):
     def deactivate_package(self, username: str, **kwargs: Any) -> dict[str, Any]: ...
 
     @abstractmethod
+    def resume_customer(self, username: str, **kwargs: Any) -> dict[str, Any]: ...
+
+    @abstractmethod
     def disconnect_session(self, username: str, **kwargs: Any) -> dict[str, Any]: ...
 
     @abstractmethod

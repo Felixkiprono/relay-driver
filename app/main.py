@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
 
-from app.api.v1 import router as v1_router
+from app.api.v1 import public_router, router as v1_router
 from app.core import __version__, get_logger
 from app.database import init_db
 
@@ -18,7 +18,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-app = FastAPI(title="Relay", version=__version__, lifespan=lifespan)
+app = FastAPI(
+    title="Relay",
+    description=(
+        "A lightweight network access service. Relay receives requests from "
+        "business systems (e.g. Laravel), executes them against the configured "
+        "network driver (e.g. daloRADIUS), and returns the result.\n\n"
+        "Every endpoint except `/api/v1/health` requires an `X-API-KEY` header "
+        "— click **Authorize** below to set it once for all requests on this page."
+    ),
+    version=__version__,
+    lifespan=lifespan,
+)
 
 
 @app.middleware("http")
@@ -30,4 +41,5 @@ async def log_requests(request: Request, call_next: Callable[[Request], Awaitabl
     return response
 
 
+app.include_router(public_router)
 app.include_router(v1_router)

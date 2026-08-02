@@ -1,7 +1,8 @@
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Security
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -13,10 +14,10 @@ from app.models import AuditLog
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api/v1")
+api_key_header = APIKeyHeader(name="X-API-KEY", auto_error=False)
 
 
-def verify_api_key(x_api_key: str = Header(default="")) -> None:
+def verify_api_key(x_api_key: str | None = Security(api_key_header)) -> None:
     if not settings.api_key or x_api_key != settings.api_key:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
@@ -52,8 +53,16 @@ class UsernameRequest(BaseModel):
     username: str
 
 
-@router.get("/health")
+# Unauthenticated — load balancers/uptime monitors hit this directly.
+public_router = APIRouter(prefix="/api/v1", tags=["health"])
+
+# Everything else requires X-API-KEY.
+router = APIRouter(prefix="/api/v1", dependencies=[Depends(verify_api_key)])
+
+
+@public_router.get("/health", summary="Service and dependency health")
 def health(db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Checks Relay's own SQLite DB and the configured driver's backend (e.g. the daloRADIUS MariaDB)."""
     logger.info("Connecting to local db at %s", settings.database_url)
     try:
         db.execute(text("SELECT 1"))
@@ -78,63 +87,72 @@ def health(db: Session = Depends(get_db)) -> dict[str, Any]:
     }
 
 
-@router.get("/version", dependencies=[Depends(verify_api_key)])
+@router.get("/version", tags=["meta"], summary="Relay's own version")
 def version() -> dict[str, str]:
     return {"version": __version__}
 
 
-@router.get("/driver", dependencies=[Depends(verify_api_key)])
+@router.get("/driver", tags=["meta"], summary="Active network driver")
 def driver() -> dict[str, str]:
     return {"driver": settings.driver}
 
 
-@router.post("/customer", dependencies=[Depends(verify_api_key)])
+@router.post("/customer", tags=["customer"], summary="Provision a customer on the network driver")
 def create_customer(body: CreateCustomerRequest, db: Session = Depends(get_db)) -> Any:
+    """Idempotent — calling this again for an already-provisioned username is a no-op."""
     result = get_driver_manager().dispatch("create_customer", **body.model_dump(exclude_none=True))
     log_audit(db, "create_customer", body.username)
     return result
 
 
-@router.put("/customer/{username}", dependencies=[Depends(verify_api_key)])
+@router.put("/customer/{username}", tags=["customer"], summary="Update a customer's credentials/details")
 def update_customer(username: str, body: UpdateCustomerRequest, db: Session = Depends(get_db)) -> Any:
     result = get_driver_manager().dispatch("update_customer", username=username, **body.model_dump(exclude_none=True))
     log_audit(db, "update_customer", username)
     return result
 
 
-@router.delete("/customer/{username}", dependencies=[Depends(verify_api_key)])
+@router.delete("/customer/{username}", tags=["customer"], summary="Remove a customer from the network driver")
 def delete_customer(username: str, db: Session = Depends(get_db)) -> Any:
     result = get_driver_manager().dispatch("delete_customer", username=username)
     log_audit(db, "delete_customer", username)
     return result
 
 
-@router.post("/package/activate", dependencies=[Depends(verify_api_key)])
+@router.post("/customer/{username}/resume", tags=["customer"], summary="Clear a suspension, keep the current package")
+def resume_customer(username: str, db: Session = Depends(get_db)) -> Any:
+    result = get_driver_manager().dispatch("resume_customer", username=username)
+    log_audit(db, "resume_customer", username)
+    return result
+
+
+@router.post("/package/activate", tags=["package"], summary="Assign a package and grant network access")
 def activate_package(body: PackageRequest, db: Session = Depends(get_db)) -> Any:
     result = get_driver_manager().dispatch("activate_package", **body.model_dump(exclude_none=True))
     log_audit(db, "activate_package", body.username)
     return result
 
 
-@router.post("/package/deactivate", dependencies=[Depends(verify_api_key)])
+@router.post("/package/deactivate", tags=["package"], summary="Suspend network access")
 def deactivate_package(body: UsernameRequest, db: Session = Depends(get_db)) -> Any:
     result = get_driver_manager().dispatch("deactivate_package", username=body.username)
     log_audit(db, "deactivate_package", body.username)
     return result
 
 
-@router.post("/session/disconnect", dependencies=[Depends(verify_api_key)])
+@router.post("/session/disconnect", tags=["session"], summary="Close a customer's active session")
 def disconnect_session(body: UsernameRequest, db: Session = Depends(get_db)) -> Any:
+    """No RADIUS CoA support — closes the accounting record, doesn't force an already-connected device off the NAS."""
     result = get_driver_manager().dispatch("disconnect_session", username=body.username)
     log_audit(db, "disconnect_session", body.username)
     return result
 
 
-@router.get("/sessions", dependencies=[Depends(verify_api_key)])
+@router.get("/sessions", tags=["session"], summary="List active sessions")
 def sessions() -> Any:
     return get_driver_manager().dispatch("sessions")
 
 
-@router.get("/statistics", dependencies=[Depends(verify_api_key)])
+@router.get("/statistics", tags=["meta"], summary="Customer/session counters")
 def statistics() -> Any:
     return get_driver_manager().dispatch("statistics")

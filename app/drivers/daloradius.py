@@ -180,6 +180,17 @@ class DaloRadiusDriver(BaseDriver):
         logger.info("Radius: user disabled. username=%s", username)
         return {"status": "deactivated", "username": username}
 
+    def resume_customer(self, username: str, **kwargs: Any) -> dict[str, Any]:
+        """Clears a suspension without touching whatever package group is already assigned."""
+        with self._engine.begin() as conn:
+            conn.execute(
+                text("DELETE FROM radusergroup WHERE username = :username AND groupname = :disabled_group"),
+                {"username": username, "disabled_group": DISABLED_GROUP},
+            )
+
+        logger.info("Radius: user resumed. username=%s", username)
+        return {"status": "resumed", "username": username}
+
     def disconnect_session(self, username: str, **kwargs: Any) -> dict[str, Any]:
         with self._engine.begin() as conn:
             result = conn.execute(
