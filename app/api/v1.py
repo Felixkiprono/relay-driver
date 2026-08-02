@@ -29,15 +29,23 @@ def log_audit(db: Session, action: str, target: str | None = None) -> None:
 class CreateCustomerRequest(BaseModel):
     username: str
     password: str
+    first_name: str | None = None
+    email: str | None = None
+    phone: str | None = None
 
 
 class UpdateCustomerRequest(BaseModel):
     password: str | None = None
+    first_name: str | None = None
+    email: str | None = None
+    phone: str | None = None
 
 
 class PackageRequest(BaseModel):
     username: str
     package: str
+    session_timeout_seconds: int | None = None
+    rate_limit: str | None = None
 
 
 class UsernameRequest(BaseModel):
@@ -82,7 +90,7 @@ def driver() -> dict[str, str]:
 
 @router.post("/customer", dependencies=[Depends(verify_api_key)])
 def create_customer(body: CreateCustomerRequest, db: Session = Depends(get_db)) -> Any:
-    result = get_driver_manager().dispatch("create_customer", username=body.username, password=body.password)
+    result = get_driver_manager().dispatch("create_customer", **body.model_dump(exclude_none=True))
     log_audit(db, "create_customer", body.username)
     return result
 
@@ -103,7 +111,7 @@ def delete_customer(username: str, db: Session = Depends(get_db)) -> Any:
 
 @router.post("/package/activate", dependencies=[Depends(verify_api_key)])
 def activate_package(body: PackageRequest, db: Session = Depends(get_db)) -> Any:
-    result = get_driver_manager().dispatch("activate_package", username=body.username, package=body.package)
+    result = get_driver_manager().dispatch("activate_package", **body.model_dump(exclude_none=True))
     log_audit(db, "activate_package", body.username)
     return result
 
