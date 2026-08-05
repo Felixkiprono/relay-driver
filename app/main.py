@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse
 
 from app.api.v1 import public_router, router as v1_router
 from app.core import __version__, get_logger
@@ -71,6 +72,16 @@ async def log_requests(request: Request, call_next: Callable[[Request], Awaitabl
     log("← %s %s %s %dms", request.method, request.url.path, response.status_code, duration_ms)
 
     return response
+
+
+@app.exception_handler(Exception)
+async def log_unhandled_exception(request: Request, exc: Exception) -> Response:
+    # Driver-layer failures are already logged with a traceback in
+    # DriverManager.dispatch(); this is the catch-all for anything else
+    # (bad request data, DB connection drops, etc.) so nothing fails silently
+    # with just a bare 500 and no trace of what happened.
+    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 app.include_router(public_router)
