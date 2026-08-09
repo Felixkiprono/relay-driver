@@ -54,7 +54,42 @@ class DaloRadiusDriver(BaseDriver):
                 text("SELECT 1 FROM radcheck WHERE username = :username LIMIT 1"), {"username": username}
             ).first()
             if exists:
-                logger.info("Radius: user already provisioned, skipping. username=%s", username)
+                # Keep radcheck in sync with whatever password the caller currently
+                # considers current, rather than silently keeping whatever was
+                # written on first provisioning. Laravel's RadiusGateway.authenticate()
+                # calls this endpoint on every access grant, not just the first one,
+                # and always sends its own customers.radius_password — if that ever
+                # diverges from what's already in radcheck (e.g. the caller's local
+                # record was reset/regenerated after the first provisioning, or a
+                # radcheck row was created some other way, e.g. directly in
+                # daloRADIUS), silently skipping here leaves radcheck holding a
+                # password the caller no longer has on file, and the customer's
+                # actual mobile login attempt (sent using the caller's current
+                # password) fails RADIUS auth against a value it has no way of
+                # knowing is stale. Never log the password itself either way.
+                current_password = conn.execute(
+                    text(
+                        "SELECT value FROM radcheck "
+                        "WHERE username = :username AND attribute = 'Cleartext-Password'"
+                    ),
+                    {"username": username},
+                ).scalar_one_or_none()
+
+                if current_password != password:
+                    conn.execute(
+                        text(
+                            "UPDATE radcheck SET value = :password "
+                            "WHERE username = :username AND attribute = 'Cleartext-Password'"
+                        ),
+                        {"username": username, "password": password},
+                    )
+                    logger.warning(
+                        "Radius: password drift detected on existing user, radcheck corrected. username=%s",
+                        username,
+                    )
+                else:
+                    logger.info("Radius: user already provisioned, password unchanged. username=%s", username)
+
                 return {"status": "exists", "username": username}
 
             conn.execute(
