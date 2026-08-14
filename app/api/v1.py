@@ -56,6 +56,28 @@ class UsernameRequest(BaseModel):
     username: str
 
 
+class NasRequest(BaseModel):
+    nasname: str
+    shortname: str | None = None
+    type: str | None = None
+    ports: int | None = None
+    secret: str | None = None
+    server: str | None = None
+    community: str | None = None
+    description: str | None = None
+
+
+class NasUpdateRequest(BaseModel):
+    nasname: str | None = None
+    shortname: str | None = None
+    type: str | None = None
+    ports: int | None = None
+    secret: str | None = None
+    server: str | None = None
+    community: str | None = None
+    description: str | None = None
+
+
 # Unauthenticated — load balancers/uptime monitors hit this directly.
 public_router = APIRouter(prefix="/api/v1", tags=["health"])
 
@@ -159,3 +181,34 @@ def sessions() -> Any:
 @router.get("/statistics", tags=["meta"], summary="Customer/session counters")
 def statistics() -> Any:
     return get_driver_manager().dispatch("statistics")
+
+
+@router.get("/nas", tags=["nas"], summary="List NAS (network access server) records")
+def list_nas() -> Any:
+    return get_driver_manager().dispatch("nas_list")
+
+
+@router.get("/nas/{nas_id}", tags=["nas"], summary="Get a single NAS record")
+def get_nas(nas_id: int) -> Any:
+    return get_driver_manager().dispatch("nas_get", nas_id=nas_id)
+
+
+@router.post("/nas", tags=["nas"], summary="Create a NAS record")
+def create_nas(body: NasRequest, db: Session = Depends(get_db)) -> Any:
+    result = get_driver_manager().dispatch("nas_create", **body.model_dump(exclude_none=True))
+    log_audit(db, "create_nas", body.nasname)
+    return result
+
+
+@router.put("/nas/{nas_id}", tags=["nas"], summary="Update a NAS record")
+def update_nas(nas_id: int, body: NasUpdateRequest, db: Session = Depends(get_db)) -> Any:
+    result = get_driver_manager().dispatch("nas_update", nas_id=nas_id, **body.model_dump(exclude_none=True))
+    log_audit(db, "update_nas", str(nas_id))
+    return result
+
+
+@router.delete("/nas/{nas_id}", tags=["nas"], summary="Delete a NAS record")
+def delete_nas(nas_id: int, db: Session = Depends(get_db)) -> Any:
+    result = get_driver_manager().dispatch("nas_delete", nas_id=nas_id)
+    log_audit(db, "delete_nas", str(nas_id))
+    return result

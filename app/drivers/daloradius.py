@@ -250,6 +250,80 @@ class DaloRadiusDriver(BaseDriver):
             ).mappings()
             return [dict(row) for row in rows]
 
+    def nas_list(self) -> list[dict[str, Any]]:
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT id, nasname, shortname, type, ports, secret, server, community, description "
+                    "FROM nas ORDER BY id"
+                )
+            ).mappings()
+            return [dict(row) for row in rows]
+
+    def nas_get(self, nas_id: int) -> dict[str, Any] | None:
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT id, nasname, shortname, type, ports, secret, server, community, description "
+                    "FROM nas WHERE id = :id"
+                ),
+                {"id": nas_id},
+            ).mappings().first()
+            return dict(row) if row else None
+
+    def nas_create(
+        self,
+        nasname: str,
+        shortname: str | None = None,
+        type: str | None = None,
+        ports: int | None = None,
+        secret: str | None = None,
+        server: str | None = None,
+        community: str | None = None,
+        description: str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                text(
+                    "INSERT INTO nas (nasname, shortname, type, ports, secret, server, community, description) "
+                    "VALUES (:nasname, :shortname, :type, :ports, :secret, :server, :community, :description)"
+                ),
+                {
+                    "nasname": nasname,
+                    "shortname": shortname,
+                    "type": type,
+                    "ports": ports,
+                    "secret": secret,
+                    "server": server,
+                    "community": community,
+                    "description": description,
+                },
+            )
+            nas_id = result.lastrowid
+
+        logger.info("Radius: NAS created. id=%s nasname=%s", nas_id, nasname)
+        return {"status": "created", "id": nas_id}
+
+    def nas_update(self, nas_id: int, **fields: Any) -> dict[str, Any]:
+        columns = ("nasname", "shortname", "type", "ports", "secret", "server", "community", "description")
+        updates = {col: fields[col] for col in columns if fields.get(col) is not None}
+
+        if updates:
+            set_clause = ", ".join(f"{col} = :{col}" for col in updates)
+            with self._engine.begin() as conn:
+                conn.execute(text(f"UPDATE nas SET {set_clause} WHERE id = :id"), {**updates, "id": nas_id})
+
+        logger.info("Radius: NAS updated. id=%s", nas_id)
+        return {"status": "updated", "id": nas_id}
+
+    def nas_delete(self, nas_id: int) -> dict[str, Any]:
+        with self._engine.begin() as conn:
+            conn.execute(text("DELETE FROM nas WHERE id = :id"), {"id": nas_id})
+
+        logger.info("Radius: NAS deleted. id=%s", nas_id)
+        return {"status": "deleted", "id": nas_id}
+
     def statistics(self) -> dict[str, Any]:
         with self._engine.connect() as conn:
             total_customers = conn.execute(text("SELECT COUNT(DISTINCT username) FROM radcheck")).scalar_one()
