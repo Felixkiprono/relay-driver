@@ -50,6 +50,7 @@ class PackageRequest(BaseModel):
     package: str
     session_timeout_seconds: int | None = None
     rate_limit: str | None = None
+    mikrotik_group: str | None = None
 
 
 class UsernameRequest(BaseModel):

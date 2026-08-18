@@ -161,6 +161,7 @@ class DaloRadiusDriver(BaseDriver):
         package: str,
         session_timeout_seconds: int | None = None,
         rate_limit: str | None = None,
+        mikrotik_group: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         with self._engine.begin() as conn:
@@ -183,6 +184,21 @@ class DaloRadiusDriver(BaseDriver):
                             "VALUES (:package, 'Mikrotik-Rate-Limit', ':=', :value)"
                         ),
                         {"package": package, "value": rate_limit},
+                    )
+                if mikrotik_group:
+                    # Selects a MikroTik Hotspot User Profile of this name for
+                    # the user — that profile is where a walled-garden
+                    # restriction (e.g. *.go.ke only, for the free package)
+                    # actually lives, configured on the router itself. This
+                    # only fires for packages that ask for it (see Laravel's
+                    # RadiusGateway::activatePackage()); paid packages never
+                    # pass this, so they keep the router's default profile.
+                    conn.execute(
+                        text(
+                            "INSERT INTO radgroupreply (groupname, attribute, op, value) "
+                            "VALUES (:package, 'Mikrotik-Group', ':=', :value)"
+                        ),
+                        {"package": package, "value": mikrotik_group},
                     )
                 logger.info("Radius: group bootstrapped. package=%s", package)
 
