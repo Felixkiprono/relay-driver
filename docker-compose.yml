@@ -4,6 +4,11 @@ services:
       context: .
     ports:
       - "127.0.0.1:8082:8080"
+      # RouterOS's `/system logging action set remote` sends DNS-query
+      # syslog here (see app/dns_listener.py) — unlike the HTTP API above,
+      # this can't go through Traefik (raw UDP, not HTTP), so it must be
+      # published directly and reachable from the MikroTik's network.
+      - "5140:5140/udp"
     env_file:
       - .env
     extra_hosts:

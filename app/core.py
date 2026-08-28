@@ -20,6 +20,11 @@ class Settings(BaseSettings):
 
     driver: str = "daloradius"
 
+    # UDP port the DNS-query syslog listener binds to — point a MikroTik's
+    # `/system logging action set remote remote-port=...` (topics=dns) here
+    # to capture per-client top-level domain visits. See app/dns_listener.py.
+    dns_log_udp_port: int = 5140
+
     dalo_url: str = ""
 
     dalo_db_host: str = ""

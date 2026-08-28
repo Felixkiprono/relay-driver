@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.core import START_TIME, __version__, get_logger, settings
 from app.database import get_db
 from app.drivers.manager import get_driver_manager
-from app.models import AuditLog
+from app.models import AuditLog, DnsQuery
 
 logger = get_logger(__name__)
 
@@ -213,3 +213,22 @@ def delete_nas(nas_id: int, db: Session = Depends(get_db)) -> Any:
     result = get_driver_manager().dispatch("nas_delete", nas_id=nas_id)
     log_audit(db, "delete_nas", str(nas_id))
     return result
+
+
+@router.get("/dns-log", tags=["dns"], summary="Top-level domains resolved by hotspot clients, as captured from RouterOS DNS logging")
+def dns_log(since_id: int = 0, limit: int = 500, db: Session = Depends(get_db)) -> Any:
+    """Ordered by id ascending so a caller can page through with `since_id = last id seen`."""
+    limit = min(limit, 1000)
+
+    rows = (
+        db.query(DnsQuery)
+        .filter(DnsQuery.id > since_id)
+        .order_by(DnsQuery.id.asc())
+        .limit(limit)
+        .all()
+    )
+
+    return [
+        {"id": row.id, "client_ip": row.client_ip, "domain": row.domain, "queried_at": row.queried_at.isoformat()}
+        for row in rows
+    ]

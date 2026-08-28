@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from app.api.v1 import public_router, router as v1_router
 from app.core import __version__, get_logger
 from app.database import init_db
+from app.dns_listener import start_dns_listener
 
 logger = get_logger(__name__)
 
@@ -18,8 +19,13 @@ REDACTED_FIELDS = {"password"}
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     init_db()
+
+    dns_transport = await start_dns_listener()
+
     logger.info("Relay started")
     yield
+
+    dns_transport.close()
 
 
 app = FastAPI(

@@ -59,7 +59,27 @@ POST /api/v1/session/disconnect
 GET  /api/v1/sessions
 
 GET  /api/v1/statistics
+
+GET  /api/v1/dns-log
 ```
+
+## DNS query logging (top-level browsed domains)
+
+Relay also runs a small UDP syslog listener (`app/dns_listener.py`, started
+alongside the HTTP API) that captures which top-level domain each hotspot
+client resolved, straight from a MikroTik's own DNS server — no proxy, no
+packet inspection. Point a router at it:
+
+```
+/system logging add topics=dns action=remote
+/system logging action set remote remote-address=<relay-host> remote-port=5140 remote-protocol=udp
+```
+
+`DNS_LOG_UDP_PORT` in `.env` controls the listening port (default `5140`).
+Unlike the HTTP API, this is raw UDP and can't be proxied through Traefik —
+the port must be published directly (see `docker-compose.yml`) and reachable
+from the router's network. Laravel polls `GET /api/v1/dns-log?since_id=...`
+to pull new rows and attribute them to a customer by IP.
 
 ## Drivers
 
