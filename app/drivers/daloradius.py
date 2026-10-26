@@ -259,8 +259,12 @@ class DaloRadiusDriver(BaseDriver):
         with self._engine.connect() as conn:
             rows = conn.execute(
                 text(
-                    "SELECT username, nasipaddress, framedipaddress, callingstationid, "
-                    "acctstarttime, acctsessiontime "
+                    # Byte counters let LumaNet show live usage and top
+                    # consumers. Only columns present in every FreeRADIUS
+                    # radacct schema (2.x and 3.x) are selected.
+                    "SELECT radacctid, acctsessionid, username, nasipaddress, framedipaddress, "
+                    "callingstationid, calledstationid, acctstarttime, acctsessiontime, "
+                    "acctinputoctets, acctoutputoctets "
                     "FROM radacct WHERE acctstoptime IS NULL ORDER BY acctstarttime DESC"
                 )
             ).mappings()
