@@ -68,6 +68,9 @@ class PolicyFields(BaseModel):
 class PackageRequest(PolicyFields):
     username: str
     package: str
+    max_devices: int | None = Field(default=None, ge=1, le=50)
+    # ISO 8601; on-site subscriptions end on a date rather than a timer.
+    expires_at: str | None = None
     # Legacy fields, still accepted from older LumaNet versions.
     rate_limit: str | None = None
     mikrotik_group: str | None = None
@@ -75,6 +78,11 @@ class PackageRequest(PolicyFields):
 
 class PackageSyncRequest(PolicyFields):
     package: str
+    max_devices: int | None = Field(default=None, ge=1, le=50)
+
+
+class ExpirationRequest(BaseModel):
+    expires_at: str | None = None
 
 
 class UsernameRequest(BaseModel):
@@ -176,6 +184,13 @@ def resume_customer(username: str, db: Session = Depends(get_db)) -> Any:
     return result
 
 
+@router.put("/customer/{username}/expiration", tags=["customer"], summary="Set or clear the date after which RADIUS refuses this user")
+def set_expiration(username: str, body: ExpirationRequest, db: Session = Depends(get_db)) -> Any:
+    result = get_driver_manager().dispatch("set_expiration", username=username, expires_at=body.expires_at or "")
+    log_audit(db, "set_expiration", username)
+    return result
+
+
 @router.post("/package/activate", tags=["package"], summary="Assign a package and grant network access")
 def activate_package(body: PackageRequest, db: Session = Depends(get_db)) -> Any:
     try:
@@ -191,7 +206,7 @@ def activate_package(body: PackageRequest, db: Session = Depends(get_db)) -> Any
 def sync_package(body: PackageSyncRequest, db: Session = Depends(get_db)) -> Any:
     """Call after editing a package so new speeds/caps reach routers without re-activating every customer."""
     attributes = _attributes_or_422(body)
-    result = get_driver_manager().dispatch("sync_package", package=body.package, attributes=attributes)
+    result = get_driver_manager().dispatch("sync_package", package=body.package, attributes=attributes, max_devices=body.max_devices)
     log_audit(db, "sync_package", body.package)
     return result
 

@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import bindparam, create_engine, text
@@ -8,6 +9,14 @@ from app.drivers.base import BaseDriver
 from app.vendors import MANAGED_ATTRIBUTES, PackagePolicy, build_reply_attributes, parse_rate_limit
 
 logger = get_logger(__name__)
+
+
+def freeradius_date(value: str) -> str:
+    """ISO 8601 → FreeRADIUS Expiration format, e.g. '27 Nov 2026 23:59:59' (UTC)."""
+    moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if moment.tzinfo is not None:
+        moment = moment.astimezone(UTC)
+    return moment.strftime("%d %b %Y %H:%M:%S")
 
 DISABLED_GROUP = "daloRADIUS-Disabled-Users"
 DISABLED_GROUP_PRIORITY = -1
@@ -172,11 +181,15 @@ class DaloRadiusDriver(BaseDriver):
         interim_interval_seconds: int | None = None,
         profile: str | None = None,
         vendors: list[str] | None = None,
+        max_devices: int | None = None,
+        expires_at: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """
         Assign the user to the package's group and (re)write the group's
-        reply attributes for every vendor in `vendors`. Attributes Relay
+        reply attributes for every vendor in `vendors`. `max_devices` sets
+        the group's Simultaneous-Use; `expires_at` (ISO 8601) sets the user's
+        own Expiration, used for on-site subscriptions that end on a date. Attributes Relay
         manages are replaced on every call, so edited speeds and caps take
         effect; rows added by hand in daloRADIUS for other attributes stay.
         """
@@ -197,7 +210,8 @@ class DaloRadiusDriver(BaseDriver):
         attributes = build_reply_attributes(policy, vendors)
 
         with self._engine.begin() as conn:
-            self._sync_group(conn, package, attributes)
+            self._sync_group(conn, package, attributes, max_devices)
+            self._set_expiration(conn, username, expires_at)
             conn.execute(
                 text("DELETE FROM radusergroup WHERE username = :username AND groupname != :disabled_group"),
                 {"username": username, "disabled_group": DISABLED_GROUP},
@@ -210,15 +224,45 @@ class DaloRadiusDriver(BaseDriver):
         logger.info("Radius: package activated. username=%s package=%s attributes=%d", username, package, len(attributes))
         return {"status": "activated", "username": username, "package": package, "attributes": [list(attribute) for attribute in attributes]}
 
-    def sync_package(self, package: str, attributes: list[tuple[str, str]]) -> dict[str, Any]:
+    def sync_package(self, package: str, attributes: list[tuple[str, str]], max_devices: int | None = None) -> dict[str, Any]:
         """Rewrite a package group's managed reply attributes without touching its members."""
         with self._engine.begin() as conn:
-            self._sync_group(conn, package, attributes)
+            self._sync_group(conn, package, attributes, max_devices)
 
         logger.info("Radius: package synced. package=%s attributes=%d", package, len(attributes))
         return {"status": "synced", "package": package, "attributes": [list(attribute) for attribute in attributes]}
 
-    def _sync_group(self, conn: Connection, package: str, attributes: list[tuple[str, str]]) -> None:
+    def set_expiration(self, username: str, expires_at: str | None) -> dict[str, Any]:
+        """Set (or with None, clear) the date after which RADIUS refuses this user."""
+        with self._engine.begin() as conn:
+            self._set_expiration(conn, username, expires_at)
+
+        logger.info("Radius: expiration set. username=%s expires_at=%s", username, expires_at)
+        return {"status": "updated", "username": username, "expires_at": expires_at}
+
+    def _set_expiration(self, conn: Connection, username: str, expires_at: str | None) -> None:
+        if expires_at is None:
+            return
+        conn.execute(text("DELETE FROM radcheck WHERE username = :username AND attribute = 'Expiration'"), {"username": username})
+        if expires_at:
+            conn.execute(
+                text("INSERT INTO radcheck (username, attribute, op, value) VALUES (:username, 'Expiration', ':=', :value)"),
+                {"username": username, "value": freeradius_date(expires_at)},
+            )
+
+    def _sync_group(self, conn: Connection, package: str, attributes: list[tuple[str, str]], max_devices: int | None = None) -> None:
+        if max_devices is not None:
+            # Simultaneous-Use is a *check* item: FreeRADIUS refuses a login
+            # when the user already has this many open accounting sessions.
+            conn.execute(
+                text("DELETE FROM radgroupcheck WHERE groupname = :package AND attribute = 'Simultaneous-Use'"),
+                {"package": package},
+            )
+            conn.execute(
+                text("INSERT INTO radgroupcheck (groupname, attribute, op, value) VALUES (:package, 'Simultaneous-Use', ':=', :value)"),
+                {"package": package, "value": str(max_devices)},
+            )
+
         conn.execute(
             text("DELETE FROM radgroupreply WHERE groupname = :package AND attribute IN :managed").bindparams(
                 bindparam("managed", expanding=True)

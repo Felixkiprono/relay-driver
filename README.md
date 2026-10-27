@@ -51,6 +51,7 @@ POST   /api/v1/customer
 PUT    /api/v1/customer/{username}
 DELETE /api/v1/customer/{username}
 POST   /api/v1/customer/{username}/resume
+PUT    /api/v1/customer/{username}/expiration   date after which RADIUS refuses the user
 
 POST /api/v1/package/activate      (vendor-aware; see "Router vendors" below)
 POST /api/v1/package/deactivate
@@ -139,6 +140,11 @@ a mixed fleet gets every family it needs; without it MikroTik is assumed.
 | TP-Link Omada, Ubiquiti, Cambium, Ruijie, pfSense | `WISPr-Bandwidth-Max-Up/Down` | — | — |
 | OpenWrt / CoovaChilli | `ChilliSpot-Bandwidth-Max-Up/Down` | `ChilliSpot-Max-Total-Octets` | — |
 | Aruba / Cisco / Nokia | via the named profile | — | `Aruba-User-Role` / `Filter-Id` / `Alc-SLA-Prof-Str` |
+
+`max_devices` on activate/sync becomes the group's `Simultaneous-Use` check
+(FreeRADIUS's `sql` session tracking must be enabled for it to count open
+sessions). `expires_at` writes the user's own `Expiration`, which on-site
+(PPPoE) subscriptions use so RADIUS refuses them after their paid date.
 
 Every activation replaces the attributes Relay manages for that group, so
 edited packages take effect; rows added by hand for other attributes stay.

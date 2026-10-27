@@ -32,6 +32,7 @@ RADIUS_SCHEMA = [
     "CREATE TABLE radreply (id INTEGER PRIMARY KEY, username TEXT, attribute TEXT, op TEXT, value TEXT)",
     "CREATE TABLE radusergroup (id INTEGER PRIMARY KEY, username TEXT, groupname TEXT, priority INTEGER)",
     "CREATE TABLE radgroupreply (id INTEGER PRIMARY KEY, groupname TEXT, attribute TEXT, op TEXT, value TEXT)",
+    "CREATE TABLE radgroupcheck (id INTEGER PRIMARY KEY, groupname TEXT, attribute TEXT, op TEXT, value TEXT)",
     "CREATE TABLE userinfo (id INTEGER PRIMARY KEY, username TEXT, firstname TEXT, email TEXT, mobilephone TEXT,"
     " creationdate TEXT, creationby TEXT, updatedate TEXT, updateby TEXT)",
     "CREATE TABLE nas (id INTEGER PRIMARY KEY, nasname TEXT, shortname TEXT, type TEXT, ports INTEGER, secret TEXT,"
