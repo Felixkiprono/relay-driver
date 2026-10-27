@@ -52,11 +52,16 @@ PUT    /api/v1/customer/{username}
 DELETE /api/v1/customer/{username}
 POST   /api/v1/customer/{username}/resume
 
-POST /api/v1/package/activate
+POST /api/v1/package/activate      (vendor-aware; see "Router vendors" below)
 POST /api/v1/package/deactivate
+POST /api/v1/package/sync          rewrite a package's attributes after an edit
+POST /api/v1/package/preview       show the attributes a package would produce
+GET  /api/v1/vendors               supported router vendors and what each honours
 
 POST /api/v1/session/disconnect
 GET  /api/v1/sessions
+GET  /api/v1/accounting/usage?since=&until=&group_by=username|nas
+GET  /api/v1/accounting/daily?since=&until=
 
 GET  /api/v1/statistics
 
@@ -118,3 +123,37 @@ Traefik, not that host port.
 entry in `docker-compose.yml`) lets Relay reach a daloRADIUS MariaDB bound to
 the host's loopback interface, on both local Docker Desktop and a Linux
 droplet.
+
+## Router vendors
+
+Packages are written as vendor-neutral policy (session/idle timeout, interim
+interval, upload/download kbit/s, data cap in bytes, optional router-side
+profile). `app/vendors.py` turns that into each manufacturer's RADIUS reply
+attributes. Pass `vendors` (LumaNet's router vendor keys) on activate/sync so
+a mixed fleet gets every family it needs; without it MikroTik is assumed.
+
+| Vendors | Speed | Data cap | Profile |
+|---|---|---|---|
+| MikroTik | `Mikrotik-Rate-Limit` | `Mikrotik-Total-Limit` (+ gigawords) | `Mikrotik-Group` |
+| Huawei | `Huawei-Input/Output-Average-Rate` | `Huawei-Remanent-Volume` | `Filter-Id` |
+| TP-Link Omada, Ubiquiti, Cambium, Ruijie, pfSense | `WISPr-Bandwidth-Max-Up/Down` | — | — |
+| OpenWrt / CoovaChilli | `ChilliSpot-Bandwidth-Max-Up/Down` | `ChilliSpot-Max-Total-Octets` | — |
+| Aruba / Cisco / Nokia | via the named profile | — | `Aruba-User-Role` / `Filter-Id` / `Alc-SLA-Prof-Str` |
+
+Every activation replaces the attributes Relay manages for that group, so
+edited packages take effect; rows added by hand for other attributes stay.
+FreeRADIUS needs each family's dictionary loaded (stock FreeRADIUS has them).
+
+## API key
+
+`API_KEY` is only enforced when `REQUIRE_API_KEY=true`. Turn it on once
+LumaNet's `RELAY_API_KEY` matches; until then Relay logs a warning at startup.
+
+## Tests
+
+```bash
+uv run pytest
+```
+
+The daloRADIUS driver runs against an in-memory SQLite copy of the
+FreeRADIUS tables (see `tests/conftest.py`), so no database is needed.
