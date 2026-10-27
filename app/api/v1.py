@@ -68,7 +68,7 @@ class PolicyFields(BaseModel):
 class PackageRequest(PolicyFields):
     username: str
     package: str
-    max_devices: int | None = Field(default=None, ge=1, le=50)
+    max_devices: int | None = Field(default=None, ge=0, le=50)
     # ISO 8601; on-site subscriptions end on a date rather than a timer.
     expires_at: str | None = None
     # Legacy fields, still accepted from older LumaNet versions.
@@ -78,7 +78,7 @@ class PackageRequest(PolicyFields):
 
 class PackageSyncRequest(PolicyFields):
     package: str
-    max_devices: int | None = Field(default=None, ge=1, le=50)
+    max_devices: int | None = Field(default=None, ge=0, le=50)
 
 
 class ExpirationRequest(BaseModel):

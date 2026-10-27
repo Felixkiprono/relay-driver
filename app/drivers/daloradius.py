@@ -254,14 +254,16 @@ class DaloRadiusDriver(BaseDriver):
         if max_devices is not None:
             # Simultaneous-Use is a *check* item: FreeRADIUS refuses a login
             # when the user already has this many open accounting sessions.
+            # 0 removes the limit.
             conn.execute(
                 text("DELETE FROM radgroupcheck WHERE groupname = :package AND attribute = 'Simultaneous-Use'"),
                 {"package": package},
             )
-            conn.execute(
-                text("INSERT INTO radgroupcheck (groupname, attribute, op, value) VALUES (:package, 'Simultaneous-Use', ':=', :value)"),
-                {"package": package, "value": str(max_devices)},
-            )
+            if max_devices > 0:
+                conn.execute(
+                    text("INSERT INTO radgroupcheck (groupname, attribute, op, value) VALUES (:package, 'Simultaneous-Use', ':=', :value)"),
+                    {"package": package, "value": str(max_devices)},
+                )
 
         conn.execute(
             text("DELETE FROM radgroupreply WHERE groupname = :package AND attribute IN :managed").bindparams(

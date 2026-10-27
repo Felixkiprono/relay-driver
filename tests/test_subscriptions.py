@@ -46,4 +46,11 @@ def test_activation_api_accepts_devices_and_expiry(client: TestClient, radius_en
 
     assert response.status_code == 200
     assert rows(radius_engine, "SELECT value FROM radgroupcheck") == [{"value": "2"}]
-    assert client.post("/api/v1/package/activate", json={"username": "acc-2", "package": "home", "max_devices": 0}).status_code == 422
+    assert client.post("/api/v1/package/activate", json={"username": "acc-2", "package": "home", "max_devices": -1}).status_code == 422
+
+
+def test_a_zero_device_limit_removes_the_limit(driver: DaloRadiusDriver, radius_engine: Engine) -> None:
+    driver.sync_package("Daily", [], max_devices=2)
+    driver.sync_package("Daily", [], max_devices=0)
+
+    assert rows(radius_engine, "SELECT * FROM radgroupcheck") == []
