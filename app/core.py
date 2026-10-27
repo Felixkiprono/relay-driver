@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     api_key: str = ""
+    # Off by default so an existing deployment keeps working until LumaNet's
+    # RELAY_API_KEY is confirmed to match; turn on with REQUIRE_API_KEY=true.
+    require_api_key: bool = False
 
     database_url: str = "sqlite:///data/relay.db"
 

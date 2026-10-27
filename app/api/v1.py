@@ -1,9 +1,11 @@
+import secrets
 import time
-from typing import Any
+from datetime import date
+from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, Security
+from fastapi import APIRouter, Depends, HTTPException, Query, Security
 from fastapi.security import APIKeyHeader
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -11,6 +13,7 @@ from app.core import START_TIME, __version__, get_logger, settings
 from app.database import get_db
 from app.drivers.manager import get_driver_manager
 from app.models import AuditLog, DnsQuery
+from app.vendors import FAMILIES, VENDORS, PackagePolicy, build_reply_attributes, families_for, nas_type_for
 
 logger = get_logger(__name__)
 
@@ -18,10 +21,11 @@ api_key_header = APIKeyHeader(name="X-API-KEY", auto_error=False)
 
 
 def verify_api_key(x_api_key: str | None = Security(api_key_header)) -> None:
-    # TODO: re-enable once the Laravel side's API key is confirmed working —
-    # left open for now so requests aren't silently rejected while we debug
-    # the Laravel -> Relay integration.
-    return
+    """Enforced when REQUIRE_API_KEY=true (see Settings.require_api_key)."""
+    if not settings.require_api_key:
+        return
+    if not settings.api_key or not x_api_key or not secrets.compare_digest(x_api_key, settings.api_key):
+        raise HTTPException(status_code=401, detail="Invalid or missing X-API-KEY")
 
 
 def log_audit(db: Session, action: str, target: str | None = None) -> None:
@@ -45,12 +49,32 @@ class UpdateCustomerRequest(BaseModel):
     phone: str | None = None
 
 
-class PackageRequest(BaseModel):
+class PolicyFields(BaseModel):
+    session_timeout_seconds: int | None = Field(default=None, ge=1)
+    idle_timeout_seconds: int | None = Field(default=None, ge=1)
+    interim_interval_seconds: int | None = Field(default=None, ge=30)
+    upload_kbps: int | None = Field(default=None, ge=1)
+    download_kbps: int | None = Field(default=None, ge=1)
+    data_limit_bytes: int | None = Field(default=None, ge=1)
+    profile: str | None = None
+    # Vendor keys present in the fleet (LumaNet's RouterVendor values);
+    # decides which attribute families are written. Defaults to MikroTik.
+    vendors: list[str] | None = None
+
+    def policy(self) -> PackagePolicy:
+        return PackagePolicy(**{name: getattr(self, name) for name in PackagePolicy.__dataclass_fields__})
+
+
+class PackageRequest(PolicyFields):
     username: str
     package: str
-    session_timeout_seconds: int | None = None
+    # Legacy fields, still accepted from older LumaNet versions.
     rate_limit: str | None = None
     mikrotik_group: str | None = None
+
+
+class PackageSyncRequest(PolicyFields):
+    package: str
 
 
 class UsernameRequest(BaseModel):
@@ -154,9 +178,57 @@ def resume_customer(username: str, db: Session = Depends(get_db)) -> Any:
 
 @router.post("/package/activate", tags=["package"], summary="Assign a package and grant network access")
 def activate_package(body: PackageRequest, db: Session = Depends(get_db)) -> Any:
+    try:
+        families_for(body.vendors)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
     result = get_driver_manager().dispatch("activate_package", **body.model_dump(exclude_none=True))
     log_audit(db, "activate_package", body.username)
     return result
+
+
+@router.post("/package/sync", tags=["package"], summary="Rewrite a package's reply attributes for the fleet's vendors")
+def sync_package(body: PackageSyncRequest, db: Session = Depends(get_db)) -> Any:
+    """Call after editing a package so new speeds/caps reach routers without re-activating every customer."""
+    attributes = _attributes_or_422(body)
+    result = get_driver_manager().dispatch("sync_package", package=body.package, attributes=attributes)
+    log_audit(db, "sync_package", body.package)
+    return result
+
+
+@router.post("/package/preview", tags=["package"], summary="Show the reply attributes a package would produce, without writing")
+def preview_package(body: PolicyFields) -> Any:
+    return {
+        "attributes": [list(attribute) for attribute in _attributes_or_422(body)],
+        "by_vendor": {
+            vendor: [list(attribute) for attribute in build_reply_attributes(body.policy(), [vendor])]
+            for vendor in (body.vendors or ["mikrotik"])
+        },
+    }
+
+
+@router.get("/vendors", tags=["meta"], summary="Router vendors Relay can write attributes for")
+def vendors() -> Any:
+    return [
+        {
+            "key": vendor.key,
+            "label": vendor.label,
+            "family": vendor.family,
+            "nas_type": vendor.nas_type,
+            "supports_rate": bool(vendor.family and FAMILIES[vendor.family].supports_rate),
+            "supports_quota": bool(vendor.family and FAMILIES[vendor.family].supports_quota),
+            "supports_profile": bool(vendor.family and FAMILIES[vendor.family].supports_profile),
+            "notes": vendor.notes,
+        }
+        for vendor in VENDORS.values()
+    ]
+
+
+def _attributes_or_422(body: PolicyFields) -> list[tuple[str, str]]:
+    try:
+        return build_reply_attributes(body.policy(), body.vendors)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
 
 
 @router.post("/package/deactivate", tags=["package"], summary="Suspend network access")
@@ -179,6 +251,22 @@ def sessions() -> Any:
     return get_driver_manager().dispatch("sessions")
 
 
+@router.get("/accounting/usage", tags=["session"], summary="Data and time used per customer or router")
+def accounting_usage(
+    since: date,
+    until: date,
+    group_by: Literal["username", "nas"] = "username",
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> Any:
+    """Sessions started from `since` up to (not including) `until`, heaviest first."""
+    return get_driver_manager().dispatch("usage", since=since.isoformat(), until=until.isoformat(), group_by=group_by, limit=limit)
+
+
+@router.get("/accounting/daily", tags=["session"], summary="Sessions, users and data per day")
+def accounting_daily(since: date, until: date) -> Any:
+    return get_driver_manager().dispatch("usage_daily", since=since.isoformat(), until=until.isoformat())
+
+
 @router.get("/statistics", tags=["meta"], summary="Customer/session counters")
 def statistics() -> Any:
     return get_driver_manager().dispatch("statistics")
@@ -196,14 +284,20 @@ def get_nas(nas_id: int) -> Any:
 
 @router.post("/nas", tags=["nas"], summary="Create a NAS record")
 def create_nas(body: NasRequest, db: Session = Depends(get_db)) -> Any:
-    result = get_driver_manager().dispatch("nas_create", **body.model_dump(exclude_none=True))
+    fields = body.model_dump(exclude_none=True)
+    if "type" in fields:
+        fields["type"] = nas_type_for(fields["type"])
+    result = get_driver_manager().dispatch("nas_create", **fields)
     log_audit(db, "create_nas", body.nasname)
     return result
 
 
 @router.put("/nas/{nas_id}", tags=["nas"], summary="Update a NAS record")
 def update_nas(nas_id: int, body: NasUpdateRequest, db: Session = Depends(get_db)) -> Any:
-    result = get_driver_manager().dispatch("nas_update", nas_id=nas_id, **body.model_dump(exclude_none=True))
+    fields = body.model_dump(exclude_none=True)
+    if "type" in fields:
+        fields["type"] = nas_type_for(fields["type"])
+    result = get_driver_manager().dispatch("nas_update", nas_id=nas_id, **fields)
     log_audit(db, "update_nas", str(nas_id))
     return result
 

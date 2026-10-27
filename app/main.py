@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
 from app.api.v1 import public_router, router as v1_router
-from app.core import __version__, get_logger
+from app.core import __version__, get_logger, settings
 from app.database import init_db
 from app.dns_listener import start_dns_listener
 
@@ -21,6 +21,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     init_db()
 
     dns_transport = await start_dns_listener()
+
+    if not settings.require_api_key:
+        logger.warning("X-API-KEY is NOT enforced. Set REQUIRE_API_KEY=true once LumaNet's RELAY_API_KEY matches API_KEY.")
 
     logger.info("Relay started")
     yield

@@ -1,10 +1,11 @@
 from typing import Any
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine
+from sqlalchemy import bindparam, create_engine, text
+from sqlalchemy.engine import Connection, Engine
 
 from app.core import get_logger, settings
 from app.drivers.base import BaseDriver
+from app.vendors import MANAGED_ATTRIBUTES, PackagePolicy, build_reply_attributes, parse_rate_limit
 
 logger = get_logger(__name__)
 
@@ -164,46 +165,39 @@ class DaloRadiusDriver(BaseDriver):
         session_timeout_seconds: int | None = None,
         rate_limit: str | None = None,
         mikrotik_group: str | None = None,
+        upload_kbps: int | None = None,
+        download_kbps: int | None = None,
+        data_limit_bytes: int | None = None,
+        idle_timeout_seconds: int | None = None,
+        interim_interval_seconds: int | None = None,
+        profile: str | None = None,
+        vendors: list[str] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        with self._engine.begin() as conn:
-            group_configured = conn.execute(
-                text("SELECT 1 FROM radgroupreply WHERE groupname = :package LIMIT 1"), {"package": package}
-            ).first()
-            if not group_configured:
-                if session_timeout_seconds:
-                    conn.execute(
-                        text(
-                            "INSERT INTO radgroupreply (groupname, attribute, op, value) "
-                            "VALUES (:package, 'Session-Timeout', ':=', :value)"
-                        ),
-                        {"package": package, "value": str(session_timeout_seconds)},
-                    )
-                if rate_limit:
-                    conn.execute(
-                        text(
-                            "INSERT INTO radgroupreply (groupname, attribute, op, value) "
-                            "VALUES (:package, 'Mikrotik-Rate-Limit', ':=', :value)"
-                        ),
-                        {"package": package, "value": rate_limit},
-                    )
-                if mikrotik_group:
-                    # Selects a MikroTik Hotspot User Profile of this name for
-                    # the user — that profile is where a walled-garden
-                    # restriction (e.g. *.go.ke only, for the free package)
-                    # actually lives, configured on the router itself. This
-                    # only fires for packages that ask for it (see Laravel's
-                    # RadiusGateway::activatePackage()); paid packages never
-                    # pass this, so they keep the router's default profile.
-                    conn.execute(
-                        text(
-                            "INSERT INTO radgroupreply (groupname, attribute, op, value) "
-                            "VALUES (:package, 'Mikrotik-Group', ':=', :value)"
-                        ),
-                        {"package": package, "value": mikrotik_group},
-                    )
-                logger.info("Radius: group bootstrapped. package=%s", package)
+        """
+        Assign the user to the package's group and (re)write the group's
+        reply attributes for every vendor in `vendors`. Attributes Relay
+        manages are replaced on every call, so edited speeds and caps take
+        effect; rows added by hand in daloRADIUS for other attributes stay.
+        """
+        if (upload_kbps is None or download_kbps is None) and rate_limit:
+            parsed = parse_rate_limit(rate_limit)
+            if parsed:
+                upload_kbps, download_kbps = parsed
 
+        policy = PackagePolicy(
+            session_timeout_seconds=session_timeout_seconds,
+            idle_timeout_seconds=idle_timeout_seconds,
+            interim_interval_seconds=interim_interval_seconds,
+            upload_kbps=upload_kbps,
+            download_kbps=download_kbps,
+            data_limit_bytes=data_limit_bytes,
+            profile=profile or mikrotik_group,
+        )
+        attributes = build_reply_attributes(policy, vendors)
+
+        with self._engine.begin() as conn:
+            self._sync_group(conn, package, attributes)
             conn.execute(
                 text("DELETE FROM radusergroup WHERE username = :username AND groupname != :disabled_group"),
                 {"username": username, "disabled_group": DISABLED_GROUP},
@@ -213,8 +207,29 @@ class DaloRadiusDriver(BaseDriver):
                 {"username": username, "package": package},
             )
 
-        logger.info("Radius: package activated. username=%s package=%s", username, package)
-        return {"status": "activated", "username": username, "package": package}
+        logger.info("Radius: package activated. username=%s package=%s attributes=%d", username, package, len(attributes))
+        return {"status": "activated", "username": username, "package": package, "attributes": [list(attribute) for attribute in attributes]}
+
+    def sync_package(self, package: str, attributes: list[tuple[str, str]]) -> dict[str, Any]:
+        """Rewrite a package group's managed reply attributes without touching its members."""
+        with self._engine.begin() as conn:
+            self._sync_group(conn, package, attributes)
+
+        logger.info("Radius: package synced. package=%s attributes=%d", package, len(attributes))
+        return {"status": "synced", "package": package, "attributes": [list(attribute) for attribute in attributes]}
+
+    def _sync_group(self, conn: Connection, package: str, attributes: list[tuple[str, str]]) -> None:
+        conn.execute(
+            text("DELETE FROM radgroupreply WHERE groupname = :package AND attribute IN :managed").bindparams(
+                bindparam("managed", expanding=True)
+            ),
+            {"package": package, "managed": list(MANAGED_ATTRIBUTES)},
+        )
+        for attribute, value in attributes:
+            conn.execute(
+                text("INSERT INTO radgroupreply (groupname, attribute, op, value) VALUES (:package, :attribute, ':=', :value)"),
+                {"package": package, "attribute": attribute, "value": value},
+            )
 
     def deactivate_package(self, username: str, **kwargs: Any) -> dict[str, Any]:
         with self._engine.begin() as conn:
@@ -271,6 +286,40 @@ class DaloRadiusDriver(BaseDriver):
                 )
             ).mappings()
             return [dict(row) for row in rows]
+
+    def usage(self, since: str, until: str, group_by: str = "username", limit: int = 100) -> list[dict[str, Any]]:
+        """Data and time used per customer (username) or router (nasipaddress), for sessions started in the range."""
+        column = {"username": "username", "nas": "nasipaddress"}[group_by]
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    f"SELECT {column} AS key, COUNT(*) AS sessions, "
+                    "COALESCE(SUM(acctoutputoctets), 0) AS download_bytes, "
+                    "COALESCE(SUM(acctinputoctets), 0) AS upload_bytes, "
+                    "COALESCE(SUM(acctsessiontime), 0) AS seconds "
+                    "FROM radacct WHERE acctstarttime >= :since AND acctstarttime < :until "
+                    f"GROUP BY {column} "
+                    "ORDER BY COALESCE(SUM(acctoutputoctets), 0) + COALESCE(SUM(acctinputoctets), 0) DESC "
+                    "LIMIT :limit"
+                ),
+                {"since": since, "until": until, "limit": limit},
+            ).mappings()
+            return [dict(row) for row in rows]
+
+    def usage_daily(self, since: str, until: str) -> list[dict[str, Any]]:
+        """Totals per day (by session start) across all routers."""
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT DATE(acctstarttime) AS day, COUNT(*) AS sessions, COUNT(DISTINCT username) AS users, "
+                    "COALESCE(SUM(acctoutputoctets), 0) AS download_bytes, "
+                    "COALESCE(SUM(acctinputoctets), 0) AS upload_bytes "
+                    "FROM radacct WHERE acctstarttime >= :since AND acctstarttime < :until "
+                    "GROUP BY DATE(acctstarttime) ORDER BY day"
+                ),
+                {"since": since, "until": until},
+            ).mappings()
+            return [{**dict(row), "day": str(row["day"])} for row in rows]
 
     def nas_list(self) -> list[dict[str, Any]]:
         with self._engine.connect() as conn:
