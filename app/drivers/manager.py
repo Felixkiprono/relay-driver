@@ -12,14 +12,14 @@ REDACTED_ARGS = {"password"}
 
 
 class DriverManager:
-    def __init__(self, driver_name: str | None = None) -> None:
+    def __init__(self, driver_name: str | None = None, driver: BaseDriver | None = None) -> None:
         name = driver_name or settings.driver
         try:
             driver_cls = _REGISTRY[name]
         except KeyError:
             raise ValueError(f"Unknown driver: {name}") from None
         self.name = name
-        self.driver: BaseDriver = driver_cls()
+        self.driver: BaseDriver = driver or driver_cls()
         logger.info("Driver manager initialized. driver=%s", name)
 
     def dispatch(self, action: str, **kwargs: object) -> object:

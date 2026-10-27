@@ -25,8 +25,10 @@ class DaloRadiusDriver(BaseDriver):
     off the NAS mid-session — same limitation the source implementation had.
     """
 
-    def __init__(self) -> None:
-        self._engine: Engine = create_engine(settings.dalo_db_url, pool_pre_ping=True)
+    def __init__(self, engine: Engine | None = None) -> None:
+        # An engine can be injected (tests use an in-memory SQLite copy of
+        # the FreeRADIUS schema); otherwise connect to the daloRADIUS MariaDB.
+        self._engine: Engine = engine or create_engine(settings.dalo_db_url, pool_pre_ping=True)
 
     def health(self) -> dict[str, Any]:
         target = f"{settings.dalo_db_host}:{settings.dalo_db_port}/{settings.dalo_db_name}"
